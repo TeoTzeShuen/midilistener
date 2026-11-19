@@ -105,7 +105,29 @@ The toggle state is held in the footswitch, so the first press after connecting 
 - Pixels 2, 4, 6, 8 are "unsure" indicators at 5% absolute brightness (green scaled to 63 under the 20% strip brightness). After boot each one blinks green (500ms) until its own switch sends a message.
 - Not connected (from boot, or after any disconnect, until the BLE MIDI subscription is up): the strip is dark except pixel 8, which blinks red in step with the onboard RGB LED (GPIO48, via `rgbLedWrite`). Once connected, the onboard LED is steady dim purple and the strip shows switch states. A BLE drop does not re-arm the unsure indicators; only a reboot of the ESP32 does.
 - Indicator states are saved to NVS (Preferences namespace `ledstate`, key `on`, bitmask) whenever they change, and restored at boot. Tested: switches 1 and 4 left on, reset, mask 0x9 restored.
-- On a BLE disconnect, all four unsure indicators start blinking again until each switch reports.
+- A BLE disconnect does not re-arm the unsure indicators. Only an ESP32 reboot does, because the board stayed powered and a working footswitch would have been broadcasting.
+
+## Bank test (19 November 2026)
+
+- **Switching banks sends no MIDI at all.** The board only learns the bank from the next CC it receives.
+- Bank 2 (CH1): button 1 = CC 26, button 2 = CC 27, button 3 = CC 54, button 4 = CC 56 only. Buttons 3 and 4 toggle 0/64. **Buttons 1 and 2 send value 0 on every press** (they don't toggle), so their LEDs always stay off. That's down to the footswitch's configuration, not the firmware.
+- Buttons 3 and 4 share CCs with bank 1 (54; 56 is also sent by bank 1's button 4). Switching back to bank 1, button 1 sent CC 48 again.
+
+**Naming:** the bank numbers in this note and in the firmware (serial log "bank 1/2", NVS slots) are the order banks were learned, **not** the footswitch's own numbering:
+
+| Firmware slot | Footswitch bank | Keys (switches 1-4) |
+|---|---|---|
+| 1 (default) | **Bank 2** | CH1 CC 48, 49, 54, 55 (switch 4 also sends 56) |
+| 2 (learned) | **Bank 1** | CH1 CC 26, 27, 54, 56 (26/27 always send 0) |
+
+## Banks and setup mode (implemented 19 November 2026)
+
+- A key is a (MIDI channel, CC) pair; any channel is accepted. On/off and unsure state are stored per key, so a CC shared between banks shows the same state in each. A bank maps switches 1-4 to four keys. Up to 8 banks.
+- Bank switching only looks at the **first CC in a BLE packet**. If that key isn't in the current bank but is in another learned bank, the display switches to the first such bank and the board LED flashes red twice (100 ms on/off). Shared keys keep the current bank. This stops bank 1's switch 4 (CC 55 + 56 in one packet) from jumping to bank 2.
+- **Setup:** press switch 1 of any learned bank 6 times within 2.5 s. The strip shows setup: the switch being learned blinks white quickly, its pair pixel lights after the first press, and learned switches are solid white. Change bank, then press switches 1-4 twice each (the second press must match the first, otherwise it restarts that switch). On completion the strip flashes green twice and the bank is saved, replacing any bank with the same switch-1 key. 30 s with no presses, or a BLE drop, cancels it (red double flash). The even press counts leave the multiFX effects as they were.
+- Changing a bank's MIDI channel or CCs later: re-run setup for it. Its switch-1 key changes too, so it is added as a new bank; the stale entry is inert.
+- NVS (`ledstate`): `nbanks`, `banks` (blob), `onbits` (256-byte bitset over all 2048 keys), `cur` (current bank). State writes wait 1 s after the last press. The old `on` mask is migrated into bank 1 on first boot.
+- Tested: the trigger entered setup on the 6th press, bank 2 was learned as CC 26/27/54/56, and pressing CC 48 afterwards switched back to bank 1. Not yet tested: switching from bank 1 back to bank 2 after a reboot.
 
 ## Open items
 
